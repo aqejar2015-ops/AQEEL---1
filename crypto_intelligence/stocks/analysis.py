@@ -1,52 +1,76 @@
-"""Public US-equity market analysis using the same explainable baseline engine."""
-
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 
-from crypto_intelligence.analysis.technical import analyze_candles
+import requests
+
 from crypto_intelligence.config.settings import settings
-from crypto_intelligence.stocks.yahoo_client import YahooStockClient
 
 
-def _price_change(rows: list[list[Any]]) -> float:
-    if len(rows) < 2 or rows[-2][4] == 0:
-        return 0.0
-    return (float(rows[-1][4]) - float(rows[-2][4])) / float(rows[-2][4]) * 100.0
+class YahooStockClient:
+    """Public Yahoo Finance reader for top-gainers and OHLC data only."""
 
+    screener_url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+    chart_url = "https://query1.finance.yahoo.com/v8/finance/chart"
 
-def fetch_stock_analysis() -> list[dict[str, Any]]:
-    client = YahooStockClient()
-    results = []
-    for symbol in client.get_us_stock_symbols():
-        try:
-            one_min = client.get_klines(symbol, "1m", "1d")
-            five_min = client.get_klines(symbol, "5m", "5d")
-            fifteen_min = client.get_klines(symbol, "15m", "1mo")
-            a1 = analyze_candles(one_min, five_min)
-            a5 = analyze_candles(five_min, fifteen_min)
-            a15 = analyze_candles(fifteen_min)
-            score = round(a1.score * 0.20 + a5.score * 0.30 + a15.score * 0.50, 2)
-            direction = "UP" if score >= 58 else "DOWN" if score <= 42 else "FLAT"
-            results.append(
-                {
-                    "symbol": symbol,
-                    "price": float(one_min[-1][4]) if one_min else None,
-                    "change_24h": round(_price_change(one_min), 3),
-                    "score": score,
-                    "direction": direction,
-                    "signal": "صعود" if direction == "UP" else "هبوط" if direction == "DOWN" else "محايد",
-                    "confidence": round(min(0.95, 0.50 + abs(score - 50.0) / 100.0), 3),
-                    "trend": a15.trend,
-                    "rsi": a1.rsi,
-                    "macd_histogram": a1.macd_histogram,
-                    "atr_percent": a1.atr_percent,
-                    "reasons": (a1.reasons + a5.reasons + a15.reasons)[:6],
-                    "contradictions": (a1.contradictions + a5.contradictions + a15.contradictions)[:4],
-                    "analyzed_at": datetime.now(timezone.utc).isoformat(),
-                }
-            )
-        except Exception as exc:
-            results.append({"symbol": symbol, "error": str(exc)})
-    return results
+    def __init__(self) -> None:
+        self.session = requests.Session()
+        self.session.headers.update({"User-Agent": "CIOE-research/1.0"})
+
+    def get_top_gainers(self, limit: int = 7) -> list[str]:
+        params = {
+            "formatted": "true",
+            "lang": "en-US",
+            "region": "US",
+            "scrIds": "day_gainers",
+            "count": max(20, limit * 4),
+        }
+        response = self.session.get(self.screener_url, params=params, timeout=settings.request_timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+        quotes: list[dict[str, Any]] = []
+        for result in payload.get("finance", {}).get("result", []):
+            quotes.extend(result.get("quotes", []))
+        symbols: list[str] = []
+        for item in quotes:
+            symbol = str(item.get("symbol", "")).strip().upper()
+            if not symbol or item.get("quoteType") == "EQUITY" and not symbol.endswith(".US"):
+                # Allow normal exchange-listed symbols; filter once they are known to be valid.
+                pass
+            if symbol:
+                symbols.append(symbol)
+        # Deduplicate while preserving order.
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for symbol in symbols:
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            ordered.append(symbol)
+        return ordered[:limit]
+
+    def get_klines(self, symbol: str, interval: str = "1m", range_: str = "1d") -> list[list[Any]]:
+        response = self.session.get(
+            f"{self.chart_url}/{symbol}",
+            params={"interval": interval, "range": range_, "events": "div,splits"},
+            timeout=settings.request_timeout_seconds,
+        )
+        response.raise_for_status()
+        payload = response.json().get("chart", {})
+        if payload.get("error"):
+            raise RuntimeError(str(payload["error"]))
+        result = (payload.get("result") or [None])[0]
+        if not result:
+            raise RuntimeError(f"No chart data returned for {symbol}")
+        timestamps = result.get("timestamp") or []
+        quote = (result.get("indicators", {}).get("quote") or [{}])[0]
+        rows: list[list[Any]] = []
+        for i, timestamp in enumerate(timestamps):
+            values = [quote.get(key, [None] * len(timestamps))[i] for key in ("open", "high", "low", "close", "volume")]
+            if any(value is None for value in values):
+                continue
+            rows.append([int(timestamp) * 1000, *[float(value) for value in values]])
+        return rows
+
+    def get_us_stock_symbols(self) -> list[str]:
+        return [symbol.strip().upper() for symbol in settings.us_stock_symbols.split(",") if symbol.strip()]
