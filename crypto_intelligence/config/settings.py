@@ -22,6 +22,7 @@ class Settings:
     max_retries: int = int(os.getenv("MAX_RETRIES", "5"))
     retry_backoff_seconds: float = float(os.getenv("RETRY_BACKOFF_SECONDS", "1.5"))
     request_timeout_seconds: float = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "15"))
+    us_stock_symbols: str = os.getenv("US_STOCK_SYMBOLS", "AAPL,MSFT,NVDA,AMZN,META,GOOGL,TSLA")
 
     @property
     def data_dir_path(self) -> Path:
