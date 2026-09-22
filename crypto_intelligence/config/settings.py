@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import os
-from typing import Any
 
 
 @dataclass(frozen=True)
@@ -31,5 +30,6 @@ class Settings:
     @property
     def logs_dir_path(self) -> Path:
         return Path(self.logs_dir)
+
 
 settings = Settings()

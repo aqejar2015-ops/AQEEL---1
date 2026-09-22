@@ -1,27 +1,20 @@
 @echo off
 setlocal
-REM Setup script for Windows. Creates an isolated venv and installs dependencies.
-REM It does NOT modify the user's existing Python installation.
-
+cd /d "%~dp0"
 where python >nul 2>nul
 if errorlevel 1 (
-    echo Python was not found in PATH.
-    echo Install Python 3.14 64-bit from https://www.python.org/downloads/
-    echo Then rerun setup.bat.
+    echo Python was not found in PATH. Install Python 3.14 and enable Add Python to PATH.
     pause
     exit /b 1
 )
-
-if not exist .venv (
-    echo Creating virtual environment...
-    python -m venv .venv
-)
-
+if not exist .venv python -m venv .venv
 call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-
-echo.
-echo Setup complete.
-echo To start the app: run.bat
+if errorlevel 1 (
+    echo Dependency installation failed. See the message above.
+    pause
+    exit /b 1
+)
+echo Setup complete. You can now double-click run.bat.
 pause
